@@ -12,6 +12,8 @@ LEVELS = {DIV_FILTERS[k]['level']: k for k in DIV_FILTERS}
 URLS = {}
 
 '''
+$rootScope = angular.element(document).scope()
+
 IGNORAR
 https://www.servelelecciones.cl/data/elecciones_convencionales_g/filters/regiones/all.json
 https://www.servelelecciones.cl/data/elecciones_convencionales_g/filters/circ_senatorial/all.json
