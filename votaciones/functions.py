@@ -122,7 +122,8 @@ class servelScraper:
     def parse_info(computo: dict, REG: dict) -> list:
         header = [item for i in REG.values() for item in i.values()] # making a flat list (1D) from the list of lists (2D)
         resumen = [header + ['RESUMEN'] + list(i.values()) for i in computo['resumen']]
-        data = [header + [partido['a']] + list(candidato.values()) for partido in computo['data'] for candidato in partido['sd']]
+        # data = [header + [partido['a']] + list(candidato.values()) for partido in computo['data'] for candidato in partido['sd']]
+        data = [header + [list(partido.values()) for partido in computo['data']] ]
         return data + resumen
 
     @staticmethod
@@ -156,7 +157,7 @@ class servelScraper:
                         logging.info(', '.join(val_))
                         break
                 if data_list is None:
-                    data_list += self.unfold(nlevel, e['c'], REG, stop_on)
+                    data_list = self.unfold(nlevel, e['c'], REG, stop_on)
                 else:
                     data_list += self.unfold(nlevel, e['c'], REG, stop_on, data_list)
             else:
