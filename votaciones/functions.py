@@ -40,7 +40,10 @@ class servelScraper:
 
     def __init__(self, 
                  logPath: Path = None,
-                 mainurl: str = 'servelelecciones.cl'):
+                 mainurl: str = 'servelelecciones.cl',
+                 name: str = 'elecciones',
+                 election: str = 'elecciones_presidente',
+                 debug: bool = False):
         self.logPath: Path = logPath
         self.levels_file: Path = None
         self.levels: pd.DataFrame = None
@@ -48,7 +51,11 @@ class servelScraper:
         self.driver: webdriver = None
         self.mainurl = mainurl
         self.elecciones: pd.DataFrame = None
-    
+        self.name: str = name
+        self.election: str = election
+        self.debug = debug
+        
+        
     def set_driver(self, driver):
         self.driver = driver
 
@@ -58,7 +65,8 @@ class servelScraper:
         self.elecciones = pd.DataFrame([j for f in data for j in f['data'] if f['activo'] is True])
 
     def get_levels(self, stop_on: str = 'circ_electoral'):
-        self.logger = set_logger(self.__class__.__name__, file = self.logPath / 'levels.csv')
+        self.levels_file = self.logPath / f'{self.name}_levels.csv'
+        self.logger = set_logger(self.__class__.__name__, file = self.levels_file)
         listado = self.unfold(stop_on=stop_on, data_list=[])
         self.levels = listado
 
@@ -80,6 +88,8 @@ class servelScraper:
         """
         url = 'https://{}/data/{}/{}/{}.json'
 
+        if self.debug:
+            print('DEBUG: Variable division', division)
         div = DIV_FILTERS[division]
         acc = div['acciones'][type]
 
@@ -129,7 +139,9 @@ class servelScraper:
                data_list: list = None):
 
         global DATA
-        url_ = self.assembler_url(start, type='filtro', value=val)
+        if self.debug:
+            print('DEBUG: Variable start', start)
+        url_ = self.assembler_url(start, election=self.election, type='filtro', value=val)
         jsn = self.extract_json(self.driver, url_)
         
         for e in jsn:
@@ -149,7 +161,7 @@ class servelScraper:
                     data_list += self.unfold(nlevel, e['c'], REG, stop_on, data_list)
             else:
                 print([item for i in REG.values() for item in i.values()])
-                data_url = self.assembler_url(start, type='computo', value=e['c'])
+                data_url = self.assembler_url(start, election=self.election, type='computo', value=e['c'])
                 data = self.extract_json(self.driver, data_url)
                 votos_mesa = self.parse_info(data, REG)
                 if data_list is None:
