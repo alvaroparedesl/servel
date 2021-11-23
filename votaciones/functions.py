@@ -1,6 +1,7 @@
 import json
 import logging
 import pandas as pd
+import os
 import copy
 from selenium import webdriver
 from config import DIV_FILTERS, LEVELS
@@ -13,40 +14,33 @@ from pathlib import Path
 
 DATA = []
 
+def meta_scraper(chromedriver_path: 'str',
+                 driver_options: webdriver = None,
+                 **kwargs):
+    if driver_options is not None:
+        driver = webdriver.Chrome(executable_path=chromedriver_path, options=driver_options)
+    else:
+        driver = webdriver.Chrome(executable_path=chromedriver_path)
 
-def set_logger(name: str, 
-                file: Path = None,
-                level: int = logging.INFO) -> logging.Logger:  # logging.DEBUG
-    """
-    Apply logging level and handler to the given logging NAME
-    """
-    logging_params = {'level': level,
-                      'force': True,
-                      'format': '%(message)s'}
-    if file:
-        if file.exists():
-            file.unlink()
-        logging_params['filename'] = file
-        logging_params['filemode'] ='a'
-    
-    logging.basicConfig(**logging_params)
-    logging.info("Starting log")                                
-    logger = logging.getLogger(name)
-    # logger.setLevel(level)
-    return logger
+    scrap = ServelScraper(**kwargs)
 
 
-class servelScraper:
 
-    def __init__(self, 
-                 logPath: Path = None,
+
+
+class ServelScraper:
+
+    def __init__(self,
+                 log_path: Path = None,
                  mainurl: str = 'servelelecciones.cl',
                  name: str = 'elecciones',
                  election: str = 'elecciones_presidente',
-                 debug: bool = False):
-        self.logPath: Path = logPath
+                 debug: bool = False,
+                 output_folder: str = ''):
+        self.logPath: Path = log_path
         self.levels_file: Path = None
         self.levels: pd.DataFrame = None
+        self.levels_columns = ['cod_reg', 'reg', 'cod_cs', 'cs', 'cod_dis', 'dis', 'cod_com', 'com', 'cod_circ', 'Circ.Electoral']
         # self.logger = self.set_logger('test', logfile)
         self.driver: webdriver = None
         self.mainurl = mainurl
@@ -54,7 +48,9 @@ class servelScraper:
         self.name: str = name
         self.election: str = election
         self.debug = debug
-        
+        self.outputFolder = Path(os.path.join(output_folder, election))
+        self.outputFolder.mkdir(parents=True, exist_ok=True)
+        self.columns = ["opcion", "Partido", "Votos TRICEL", "Porcentaje", "Candidatos", "Electo", "sd"]
         
     def set_driver(self, driver):
         self.driver = driver
@@ -64,11 +60,27 @@ class servelScraper:
         data = self.extract_json(self.driver, url)
         self.elecciones = pd.DataFrame([j for f in data for j in f['data'] if f['activo'] is True])
 
-    def get_levels(self, stop_on: str = 'circ_electoral'):
+    def get_levels(self, stop_on: str = 'circ_electoral', overwrite: bool = True):
         self.levels_file = self.logPath / f'{self.name}_levels.csv'
-        self.logger = set_logger(self.__class__.__name__, file = self.levels_file)
-        listado = self.unfold(stop_on=stop_on, data_list=[])
-        self.levels = listado
+        read_url = True
+        if os.path.isfile(self.levels_file):
+            if not overwrite:
+                read_url = False
+            self.levels = self.parse_levels(self.levels_file, levels_columns=self.levels_columns)
+        if read_url:
+            # self.logger = set_logger(self.__class__.__name__, file=self.levels_file)
+            listado = self.unfold(stop_on=stop_on, data_list=[])  # vacío
+            self.levels = self.parse_levels(object=listado, levels_columns=self.levels_columns)
+            self.levels.to_csv(self.levels_file, index=False, encoding='UTF-8')
+
+    @staticmethod
+    def parse_levels(file: str = None, object: list = None, levels_columns: list = []):
+        if file is None:
+            df = pd.DataFrame(object)
+            df.columns = levels_columns
+        else:
+            df = pd.read_csv(file, encoding='UTF-8')
+        return df
 
     def assembler_url(self,
                       division: str,
@@ -123,7 +135,7 @@ class servelScraper:
         header = [item for i in REG.values() for item in i.values()] # making a flat list (1D) from the list of lists (2D)
         resumen = [header + ['RESUMEN'] + list(i.values()) for i in computo['resumen']]
         # data = [header + [partido['a']] + list(candidato.values()) for partido in computo['data'] for candidato in partido['sd']]
-        data = [header + [list(partido.values()) for partido in computo['data']] ]
+        data = [header + list(partido.values()) for partido in computo['data']]
         return data + resumen
 
     @staticmethod
@@ -131,6 +143,17 @@ class servelScraper:
         driver.get(url)
         content = driver.find_element_by_tag_name('pre').text
         return json.loads(content)
+
+    def export_unfold(self, **kwargs):
+        temp_ = self.unfold(**kwargs)
+        ans = pd.DataFrame(temp_)
+        sl = kwargs['REG']
+        # out_name = f'{sl.cod_com}-{sl.com}-{sl.cod_circ}-{sl.cod_circ}.csv'
+        out_name = f'{sl["comunas"]["c"]}-{sl["comunas"]["d"]}-{sl["circ_electoral"]["c"]}-{sl["circ_electoral"]["d"]}.csv'
+
+        ans.columns = self.levels_columns + ['cod_colegio', 'colegio', 'cod_mesa', 'Mesas Fusionadas', 'n1', 'n2'] + self.columns + ['n3']
+
+        ans.to_csv(self.outputFolder / out_name, index=False, encoding='UTF-8')
 
     def unfold(self, 
                start: str = 'regiones', 
@@ -154,20 +177,45 @@ class servelScraper:
                     if stop_on == start:              
                         val_ = [str(item) for i in REG.values() for item in i.values()]
                         DATA.append(val_)
-                        logging.info(', '.join(val_))
-                        break
+                        # logging.info(', '.join(val_))
+                        continue
                 if data_list is None:
                     data_list = self.unfold(nlevel, e['c'], REG, stop_on)
                 else:
-                    data_list += self.unfold(nlevel, e['c'], REG, stop_on, data_list)
+                    data_list = self.unfold(nlevel, e['c'], REG, stop_on, data_list)
             else:
                 print([item for i in REG.values() for item in i.values()])
                 data_url = self.assembler_url(start, election=self.election, type='computo', value=e['c'])
                 data = self.extract_json(self.driver, data_url)
                 votos_mesa = self.parse_info(data, REG)
                 if data_list is None:
-                    DATA += votos_mesa
+                    data_list = votos_mesa
                 else:
-                    return votos_mesa
-        
-        return data_list
+                    data_list += votos_mesa
+
+        if stop_on is None:
+            return data_list
+        else:
+            return DATA
+
+
+    def set_logger(name: str,
+                   file: Path = None,
+                   level: int = logging.INFO) -> logging.Logger:  # logging.DEBUG
+        """
+        Apply logging level and handler to the given logging NAME
+        """
+        logging_params = {'level': level,
+                          'force': True,
+                          'format': '%(message)s'}
+        if file:
+            if file.exists():
+                file.unlink()
+            logging_params['filename'] = file
+            logging_params['filemode'] = 'a'
+
+        logging.basicConfig(**logging_params)
+        logging.info("Starting log")
+        logger = logging.getLogger(name)
+        # logger.setLevel(level)
+        return logger
