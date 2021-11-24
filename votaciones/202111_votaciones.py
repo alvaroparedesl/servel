@@ -1,4 +1,4 @@
-from functions import DATA, ServelScraper
+from functions import ServelScraper, meta_scraper
 from selenium import webdriver
 from pathlib import Path
 import pandas as pd
@@ -21,6 +21,18 @@ options.add_experimental_option("prefs", {
 #-- Página principal de los resultados
 url_base = 'servelelecciones.cl'
 
+scraped = meta_scraper(chromedriver_path=chromedriver,
+                       driver_options=options,
+                       max_workers=60,
+                       headless=True,
+                       log_path=logPath,
+                       mainurl=url_base,
+                       name='presidenciales_2021_pv',
+                       election='elecciones_presidente',
+                       debug=False,
+                       output_folder='out')
+
+## ----------- OLD
 driver = webdriver.Chrome(executable_path=chromedriver, options=options)
 driver.implicitly_wait(3)
 

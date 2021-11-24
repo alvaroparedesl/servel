@@ -2,10 +2,11 @@ import json
 import logging
 import pandas as pd
 import os
-import copy
+from time import time
 from selenium import webdriver
 from config import DIV_FILTERS, LEVELS
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, wait
 
 # from selenium.webdriver.common.by import By
 # from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
@@ -14,18 +15,72 @@ from pathlib import Path
 
 DATA = []
 
+
 def meta_scraper(chromedriver_path: 'str',
                  driver_options: webdriver = None,
+                 max_workers: int = 20,
+                 headless: bool = True,
                  **kwargs):
+    if headless:
+        driver_options.add_argument("--headless")
+        print("Running in headless mode")
+
+    start_time = time()
+    initd = webdriver.Chrome(executable_path=chromedriver_path, options=driver_options)
+    initd.implicitly_wait(3)
+    inits = ServelScraper(**kwargs)
+    inits.set_driver(initd)
+
+    print('Getting levels....')
+    inits.get_levels('circ_electoral', overwrite=False)
+    print('Levels retrieved....')
+    initd.close()
+
+    futures = []
+    print('Starting pooling')
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for i, row in inits.levels.iterrows():
+            args_ = (row, chromedriver_path, driver_options)
+            futures.append(
+                executor.submit(create_scraper_unit, *args_, **kwargs)
+            )
+
+    wait(futures)
+    end_time = time()
+    elapsed_time = end_time - start_time
+    print(f"Elapsed run time: {elapsed_time} seconds")
+
+    return True
+
+
+def create_scraper_unit(level,
+                        chromedriver_path: 'str',
+                        driver_options: webdriver = None,
+                        **kwargs):
     if driver_options is not None:
         driver = webdriver.Chrome(executable_path=chromedriver_path, options=driver_options)
     else:
         driver = webdriver.Chrome(executable_path=chromedriver_path)
 
+    driver.implicitly_wait(3)
     scrap = ServelScraper(**kwargs)
+    scrap.set_driver(driver)
 
+    reg_dict = {'regiones': {'c': level.cod_reg, 'd': level.reg},
+                'circ_senatorial': {'c': level.cod_cs, 'd': level.cs},
+                'distritos': {'c': level.cod_dis, 'd': level.dis},
+                'comunas': {'c': level.cod_com, 'd': level.com},
+                'circ_electoral': {'c': level.cod_circ, 'd': level['Circ.Electoral']}
+                }
+    ans = scrap.export_unfold(start='locales',
+                              val=level.cod_circ,
+                              REG=reg_dict,
+                              stop_on=None,
+                              data_list=[])
 
+    driver.close()
 
+    return True, ans
 
 
 class ServelScraper:
@@ -40,7 +95,8 @@ class ServelScraper:
         self.logPath: Path = log_path
         self.levels_file: Path = None
         self.levels: pd.DataFrame = None
-        self.levels_columns = ['cod_reg', 'reg', 'cod_cs', 'cs', 'cod_dis', 'dis', 'cod_com', 'com', 'cod_circ', 'Circ.Electoral']
+        self.levels_columns = ['cod_reg', 'reg', 'cod_cs', 'cs', 'cod_dis', 'dis', 'cod_com', 'com', 'cod_circ',
+                               'Circ.Electoral']
         # self.logger = self.set_logger('test', logfile)
         self.driver: webdriver = None
         self.mainurl = mainurl
@@ -51,7 +107,7 @@ class ServelScraper:
         self.outputFolder = Path(os.path.join(output_folder, election))
         self.outputFolder.mkdir(parents=True, exist_ok=True)
         self.columns = ["opcion", "Partido", "Votos TRICEL", "Porcentaje", "Candidatos", "Electo", "sd"]
-        
+
     def set_driver(self, driver):
         self.driver = driver
 
@@ -109,7 +165,7 @@ class ServelScraper:
         if type == 'filtro':
             ans_.append(division)
             nivel = div['level']
-            if nivel > 1: # mayor a regiones, podría ser desde regiones si hay un filtro por país para elecciones en el extranjero.
+            if nivel > 1:  # mayor a regiones, podría ser desde regiones si hay un filtro por país para elecciones en el extranjero.
                 parent = LEVELS[nivel - 1]
                 ans_.append(DIV_FILTERS[parent]['by'])
             else:
@@ -132,7 +188,8 @@ class ServelScraper:
 
     @staticmethod
     def parse_info(computo: dict, REG: dict) -> list:
-        header = [item for i in REG.values() for item in i.values()] # making a flat list (1D) from the list of lists (2D)
+        header = [item for i in REG.values() for item in
+                  i.values()]  # making a flat list (1D) from the list of lists (2D)
         resumen = [header + ['RESUMEN'] + list(i.values()) for i in computo['resumen']]
         # data = [header + [partido['a']] + list(candidato.values()) for partido in computo['data'] for candidato in partido['sd']]
         data = [header + list(partido.values()) for partido in computo['data']]
@@ -149,14 +206,19 @@ class ServelScraper:
         ans = pd.DataFrame(temp_)
         sl = kwargs['REG']
         # out_name = f'{sl.cod_com}-{sl.com}-{sl.cod_circ}-{sl.cod_circ}.csv'
-        out_name = f'{sl["comunas"]["c"]}-{sl["comunas"]["d"]}-{sl["circ_electoral"]["c"]}-{sl["circ_electoral"]["d"]}.csv'
+        out_name = f'{sl["regiones"]["c"]}-{sl["regiones"]["d"]}-' \
+                   f'{sl["comunas"]["c"]}-{sl["comunas"]["d"]}-' \
+                   f'{sl["circ_electoral"]["c"]}-{sl["circ_electoral"]["d"]}.csv'
 
-        ans.columns = self.levels_columns + ['cod_colegio', 'colegio', 'cod_mesa', 'Mesas Fusionadas', 'n1', 'n2'] + self.columns + ['n3']
+        ans.columns = self.levels_columns + ['cod_colegio', 'colegio', 'cod_mesa', 'Mesas Fusionadas', 'n1',
+                                             'n2'] + self.columns + ['n3']
 
         ans.to_csv(self.outputFolder / out_name, index=False, encoding='UTF-8')
 
-    def unfold(self, 
-               start: str = 'regiones', 
+        return True
+
+    def unfold(self,
+               start: str = 'regiones',
                val: str = None,
                REG: dict = {},
                stop_on: str = None,
@@ -167,14 +229,14 @@ class ServelScraper:
             print('DEBUG: Variable start', start)
         url_ = self.assembler_url(start, election=self.election, type='filtro', value=val)
         jsn = self.extract_json(self.driver, url_)
-        
+
         for e in jsn:
             REG[start] = e
             if start != 'mesas':
-                clevel = DIV_FILTERS[start]['level'] # nivel actual número
-                nlevel = LEVELS[clevel+1] # nivel siguiente palabras
+                clevel = DIV_FILTERS[start]['level']  # nivel actual número
+                nlevel = LEVELS[clevel + 1]  # nivel siguiente palabras
                 if stop_on is not None:
-                    if stop_on == start:              
+                    if stop_on == start:
                         val_ = [str(item) for i in REG.values() for item in i.values()]
                         DATA.append(val_)
                         # logging.info(', '.join(val_))
@@ -184,7 +246,7 @@ class ServelScraper:
                 else:
                     data_list = self.unfold(nlevel, e['c'], REG, stop_on, data_list)
             else:
-                print([item for i in REG.values() for item in i.values()])
+                # print([item for i in REG.values() for item in i.values()])
                 data_url = self.assembler_url(start, election=self.election, type='computo', value=e['c'])
                 data = self.extract_json(self.driver, data_url)
                 votos_mesa = self.parse_info(data, REG)
@@ -197,7 +259,6 @@ class ServelScraper:
             return data_list
         else:
             return DATA
-
 
     def set_logger(name: str,
                    file: Path = None,
