@@ -2,6 +2,7 @@ import json
 import logging
 import pandas as pd
 import os
+import glob
 from time import time
 from selenium import webdriver
 from config import DIV_FILTERS, LEVELS
@@ -20,6 +21,7 @@ def meta_scraper(chromedriver_path: 'str',
                  driver_options: webdriver = None,
                  max_workers: int = 20,
                  headless: bool = True,
+                 overwrite_temp: bool = False,
                  **kwargs):
     if headless:
         driver_options.add_argument("--headless")
@@ -37,18 +39,38 @@ def meta_scraper(chromedriver_path: 'str',
     initd.close()
 
     futures = []
+    out_dir = os.path.join(kwargs['output_folder'], kwargs['name'])
+    temp_dir = os.path.join(out_dir, "temp")
+    kwargs['output_folder'] = temp_dir
     print('Starting pooling')
+    print(f'Temporary folder: {temp_dir}')
+    print(f'Output folder: {out_dir}')
+
+    OUT_NAME = '{0}-{1}-{2}-{3}-{4}-{5}.csv'
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for i, row in inits.levels.iterrows():
-            args_ = (row, chromedriver_path, driver_options)
-            futures.append(
-                executor.submit(create_scraper_unit, *args_, **kwargs)
-            )
+            go = True
+            if not overwrite_temp:
+                out_name = OUT_NAME.format(row['cod_reg'], row['reg'], row['cod_com'],
+                                           row['com'], row['cod_circ'], row['circ'])
+                if os.path.isfile(os.path.join(temp_dir, out_name)):
+                    go = False
+            if go:
+                args_ = (row, chromedriver_path, driver_options)
+                futures.append(
+                    executor.submit(create_scraper_unit, *args_, **kwargs)
+                )
 
     wait(futures)
     end_time = time()
     elapsed_time = end_time - start_time
     print(f"Elapsed run time: {elapsed_time} seconds")
+
+    print('Starting parsing')
+    all_files = glob.glob(os.path.join(temp_dir, "*.csv"))
+    all_data = pd.concat((pd.read_csv(f) for f in all_files))
+    parse_scraped(all_data, os.path.join(out_dir, 'resultados.xlsx'))
 
     return True
 
@@ -70,7 +92,7 @@ def create_scraper_unit(level,
                 'circ_senatorial': {'c': level.cod_cs, 'd': level.cs},
                 'distritos': {'c': level.cod_dis, 'd': level.dis},
                 'comunas': {'c': level.cod_com, 'd': level.com},
-                'circ_electoral': {'c': level.cod_circ, 'd': level['Circ.Electoral']}
+                'circ_electoral': {'c': level.cod_circ, 'd': level.circ}
                 }
     ans = scrap.export_unfold(start='locales',
                               val=level.cod_circ,
@@ -81,6 +103,22 @@ def create_scraper_unit(level,
     driver.close()
 
     return True, ans
+
+
+def parse_scraped(df: pd.DataFrame, outfile: str):
+    ans = df.drop(columns=['sd', 'votos_per', 'es_electo', 'n1', 'n2'])
+
+    ans['Mesa'] = ans['mesas_fusionadas'].str.split('-').str[0]
+    ans['Tipo mesa'] = ans['Mesa'].str.extract(r'(V|M)$').fillna('')
+
+    col_dict = {'cod_reg': 'Nro.Región', 'reg': 'Región', 'mesas_fusionadas': 'Mesas Fusionadas',
+                'com': 'Comuna', 'votos_n': 'Votos TRICEL', 'local': 'Local'}
+
+    ans['cod_reg'] = ans['cod_reg'] % 100
+    ans = ans.loc[~ans.opcion.isin(['Válidamente Emitidos', 'Total Votación'])]
+    ans.rename(columns=col_dict, inplace=True)
+    # ans.to_csv(outfile, encoding='UTF-8', index=False)
+    ans.to_excel(outfile, index=False)
 
 
 class ServelScraper:
@@ -95,8 +133,7 @@ class ServelScraper:
         self.logPath: Path = log_path
         self.levels_file: Path = None
         self.levels: pd.DataFrame = None
-        self.levels_columns = ['cod_reg', 'reg', 'cod_cs', 'cs', 'cod_dis', 'dis', 'cod_com', 'com', 'cod_circ',
-                               'Circ.Electoral']
+        self.levels_columns = ['cod_reg', 'reg', 'cod_cs', 'cs', 'cod_dis', 'dis', 'cod_com', 'com', 'cod_circ', 'circ']
         # self.logger = self.set_logger('test', logfile)
         self.driver: webdriver = None
         self.mainurl = mainurl
@@ -104,9 +141,9 @@ class ServelScraper:
         self.name: str = name
         self.election: str = election
         self.debug = debug
-        self.outputFolder = Path(os.path.join(output_folder, election))
+        self.outputFolder = Path(output_folder)
         self.outputFolder.mkdir(parents=True, exist_ok=True)
-        self.columns = ["opcion", "Partido", "Votos TRICEL", "Porcentaje", "Candidatos", "Electo", "sd"]
+        self.columns = ["opcion", "partido", "votos_n", "votos_per", "candidato", "es_electo", "sd"]
 
     def set_driver(self, driver):
         self.driver = driver
@@ -190,7 +227,7 @@ class ServelScraper:
     def parse_info(computo: dict, REG: dict) -> list:
         header = [item for i in REG.values() for item in
                   i.values()]  # making a flat list (1D) from the list of lists (2D)
-        resumen = [header + ['RESUMEN'] + list(i.values()) for i in computo['resumen']]
+        resumen = [header + list(i.values()) for i in computo['resumen']]
         # data = [header + [partido['a']] + list(candidato.values()) for partido in computo['data'] for candidato in partido['sd']]
         data = [header + list(partido.values()) for partido in computo['data']]
         return data + resumen
@@ -206,12 +243,14 @@ class ServelScraper:
         ans = pd.DataFrame(temp_)
         sl = kwargs['REG']
         # out_name = f'{sl.cod_com}-{sl.com}-{sl.cod_circ}-{sl.cod_circ}.csv'
-        out_name = f'{sl["regiones"]["c"]}-{sl["regiones"]["d"]}-' \
-                   f'{sl["comunas"]["c"]}-{sl["comunas"]["d"]}-' \
-                   f'{sl["circ_electoral"]["c"]}-{sl["circ_electoral"]["d"]}.csv'
+        OUT_NAME = '{0}-{1}-{2}-{3}-{4}-{5}.csv'
 
-        ans.columns = self.levels_columns + ['cod_colegio', 'colegio', 'cod_mesa', 'Mesas Fusionadas', 'n1',
-                                             'n2'] + self.columns + ['n3']
+        out_name = OUT_NAME.format(sl["regiones"]["c"], sl["regiones"]["d"],
+                                   sl["comunas"]["c"], sl["comunas"]["d"],
+                                   sl["circ_electoral"]["c"], sl["circ_electoral"]["d"])
+
+        ans.columns = self.levels_columns + ['cod_local', 'local', 'cod_mesa', 'mesas_fusionadas', 'n1',
+                                             'n2'] + self.columns # + ['n3']
 
         ans.to_csv(self.outputFolder / out_name, index=False, encoding='UTF-8')
 
