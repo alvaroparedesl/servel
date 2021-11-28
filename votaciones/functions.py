@@ -70,9 +70,9 @@ def meta_scraper(chromedriver_path: 'str',
     print('Starting parsing')
     all_files = glob.glob(os.path.join(temp_dir, "*.csv"))
     all_data = pd.concat((pd.read_csv(f) for f in all_files))
-    parse_scraped(all_data, os.path.join(out_dir, 'resultados.xlsx'))
+    result = parse_scraped(all_data, os.path.join(out_dir, 'resultados.xlsx'))
 
-    return True
+    return True, result
 
 
 def create_scraper_unit(level,
@@ -112,13 +112,16 @@ def parse_scraped(df: pd.DataFrame, outfile: str):
     ans['Tipo mesa'] = ans['Mesa'].str.extract(r'(V|M)$').fillna('')
 
     col_dict = {'cod_reg': 'Nro.Región', 'reg': 'Región', 'mesas_fusionadas': 'Mesas Fusionadas',
-                'com': 'Comuna', 'votos_n': 'Votos TRICEL', 'local': 'Local'}
+                'com': 'Comuna', 'votos_n': 'Votos TRICEL', 'local': 'Local',
+                'circ': 'Circ.Electoral'}
 
     ans['cod_reg'] = ans['cod_reg'] % 100
     ans = ans.loc[~ans.opcion.isin(['Válidamente Emitidos', 'Total Votación'])]
     ans.rename(columns=col_dict, inplace=True)
     # ans.to_csv(outfile, encoding='UTF-8', index=False)
     ans.to_excel(outfile, index=False)
+
+    return True
 
 
 class ServelScraper:
