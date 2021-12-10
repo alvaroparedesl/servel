@@ -1,4 +1,4 @@
-from functions import meta_scraper
+from votaciones.servelscraper.functions import meta_scraper
 from selenium import webdriver
 from pathlib import Path
 
@@ -20,7 +20,10 @@ options.add_experimental_option("prefs", {
 #-- Página principal de los resultados
 url_base = 'servelelecciones.cl'
 
-scraped = meta_scraper(chromedriver_path=chromedriver,
+# participacion
+# elecciones_presidente
+
+scraped = meta_scraper(webdriver_path=chromedriver,
                        driver_options=options,
                        max_workers=20,
                        headless=True,

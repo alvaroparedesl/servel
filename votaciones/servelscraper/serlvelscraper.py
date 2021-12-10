@@ -2,135 +2,19 @@ import json
 import logging
 import pandas as pd
 import os
-import glob
-from time import time
 from selenium import webdriver
-from config import DIV_FILTERS, LEVELS
+from votaciones.servelscraper.config import DIV_FILTERS, LEVELS
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, wait
-
-# from selenium.webdriver.common.by import By
-# from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
-# from selenium.webdriver.support.ui import Select, WebDriverWait
-# from selenium.webdriver.support import expected_conditions as EC
-
-DATA = []
-
-
-def meta_scraper(chromedriver_path: 'str',
-                 driver_options: webdriver = None,
-                 max_workers: int = 20,
-                 headless: bool = True,
-                 overwrite_temp: bool = False,
-                 **kwargs):
-    if headless:
-        driver_options.add_argument("--headless")
-        print("Running in headless mode")
-
-    start_time = time()
-    initd = webdriver.Chrome(executable_path=chromedriver_path, options=driver_options)
-    initd.implicitly_wait(3)
-    inits = ServelScraper(**kwargs)
-    inits.set_driver(initd)
-
-    print('Getting levels....')
-    inits.get_levels('circ_electoral', overwrite=False)
-    print('Levels retrieved....')
-    initd.close()
-
-    futures = []
-    out_dir = os.path.join(kwargs['output_folder'], kwargs['name'])
-    temp_dir = os.path.join(out_dir, "temp")
-    kwargs['output_folder'] = temp_dir
-    print('Starting pooling')
-    print(f'Temporary folder: {temp_dir}')
-    print(f'Output folder: {out_dir}')
-
-    OUT_NAME = '{0}-{1}-{2}-{3}-{4}-{5}.csv'
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for i, row in inits.levels.iterrows():
-            go = True
-            if not overwrite_temp:
-                out_name = OUT_NAME.format(row['cod_reg'], row['reg'], row['cod_com'],
-                                           row['com'], row['cod_circ'], row['circ'])
-                if os.path.isfile(os.path.join(temp_dir, out_name)):
-                    go = False
-            if go:
-                args_ = (row, chromedriver_path, driver_options)
-                futures.append(
-                    executor.submit(create_scraper_unit, *args_, **kwargs)
-                )
-
-    wait(futures)
-    end_time = time()
-    elapsed_time = end_time - start_time
-    print(f"Elapsed run time: {elapsed_time} seconds")
-
-    print('Starting parsing')
-    all_files = glob.glob(os.path.join(temp_dir, "*.csv"))
-    all_data = pd.concat((pd.read_csv(f) for f in all_files))
-    result = parse_scraped(all_data, os.path.join(out_dir, 'resultados.xlsx'))
-
-    return True, result
-
-
-def create_scraper_unit(level,
-                        chromedriver_path: 'str',
-                        driver_options: webdriver = None,
-                        **kwargs):
-    if driver_options is not None:
-        driver = webdriver.Chrome(executable_path=chromedriver_path, options=driver_options)
-    else:
-        driver = webdriver.Chrome(executable_path=chromedriver_path)
-
-    driver.implicitly_wait(3)
-    scrap = ServelScraper(**kwargs)
-    scrap.set_driver(driver)
-
-    reg_dict = {'regiones': {'c': level.cod_reg, 'd': level.reg},
-                'circ_senatorial': {'c': level.cod_cs, 'd': level.cs},
-                'distritos': {'c': level.cod_dis, 'd': level.dis},
-                'comunas': {'c': level.cod_com, 'd': level.com},
-                'circ_electoral': {'c': level.cod_circ, 'd': level.circ}
-                }
-    ans = scrap.export_unfold(start='locales',
-                              val=level.cod_circ,
-                              REG=reg_dict,
-                              stop_on=None,
-                              data_list=[])
-
-    driver.close()
-
-    return True, ans
-
-
-def parse_scraped(df: pd.DataFrame, outfile: str):
-    ans = df.drop(columns=['sd', 'votos_per', 'es_electo', 'n1', 'n2'])
-
-    ans['Mesa'] = ans['mesas_fusionadas'].str.split('-').str[0]
-    ans['Tipo mesa'] = ans['Mesa'].str.extract(r'(V|M)$').fillna('')
-
-    col_dict = {'cod_reg': 'Nro.Región', 'reg': 'Región', 'mesas_fusionadas': 'Mesas Fusionadas',
-                'com': 'Comuna', 'votos_n': 'Votos TRICEL', 'local': 'Local',
-                'circ': 'Circ.Electoral'}
-
-    ans['cod_reg'] = ans['cod_reg'] % 100
-    ans = ans.loc[~ans.opcion.isin(['Válidamente Emitidos', 'Total Votación'])]
-    ans.rename(columns=col_dict, inplace=True)
-    # ans.to_csv(outfile, encoding='UTF-8', index=False)
-    ans.to_excel(outfile, index=False)
-
-    return True
 
 
 class ServelScraper:
 
     def __init__(self,
+                 driver: webdriver,
                  log_path: Path = None,
                  mainurl: str = 'servelelecciones.cl',
                  name: str = 'elecciones',
-                 election: str = 'elecciones_presidente',
+                 election: str = None,
                  debug: bool = False,
                  output_folder: str = ''):
         self.logPath: Path = log_path
@@ -138,7 +22,7 @@ class ServelScraper:
         self.levels: pd.DataFrame = None
         self.levels_columns = ['cod_reg', 'reg', 'cod_cs', 'cs', 'cod_dis', 'dis', 'cod_com', 'com', 'cod_circ', 'circ']
         # self.logger = self.set_logger('test', logfile)
-        self.driver: webdriver = None
+        self.driver: webdriver = driver
         self.mainurl = mainurl
         self.elecciones: pd.DataFrame = None
         self.name: str = name
@@ -147,14 +31,19 @@ class ServelScraper:
         self.outputFolder = Path(output_folder)
         self.outputFolder.mkdir(parents=True, exist_ok=True)
         self.columns = ["opcion", "partido", "votos_n", "votos_per", "candidato", "es_electo", "sd"]
+        if election is None:
+            self.get_elections_list(summary=True)
 
     def set_driver(self, driver):
         self.driver = driver
 
-    def get_elections_list(self):
-        url = f'https://{self.mainurl}/modules/menu/config.json'
-        data = self.extract_json(self.driver, url)
-        self.elecciones = pd.DataFrame([j for f in data for j in f['data'] if f['activo'] is True])
+    def get_elections_list(self, overwrite: bool = False, summary: bool = False):
+        if self.elecciones is None or overwrite:
+            url = f'https://{self.mainurl}/modules/menu/config.json'
+            data = self.extract_json(self.driver, url)
+            self.elecciones = pd.DataFrame([j for f in data for j in f['data'] if f['activo'] is True])
+        if summary:
+            print(self.elecciones.iloc[:, range(4)])
 
     def get_levels(self, stop_on: str = 'circ_electoral', overwrite: bool = True):
         self.levels_file = self.logPath / f'{self.name}_levels.csv'
