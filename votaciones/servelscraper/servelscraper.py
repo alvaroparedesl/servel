@@ -3,8 +3,10 @@ import logging
 import pandas as pd
 import os
 from selenium import webdriver
-from votaciones.servelscraper.config import DIV_FILTERS, LEVELS
+from servelscraper.config import DIV_FILTERS, LEVELS
 from pathlib import Path
+
+DATA = []
 
 
 class ServelScraper:
@@ -16,7 +18,9 @@ class ServelScraper:
                  name: str = 'elecciones',
                  election: str = None,
                  debug: bool = False,
-                 output_folder: str = ''):
+                 output_folder: str = '',
+                 **kwargs):  # extra args not used here
+        self.kwargs = kwargs
         self.logPath: Path = log_path
         self.levels_file: Path = None
         self.levels: pd.DataFrame = None
@@ -117,12 +121,13 @@ class ServelScraper:
 
     @staticmethod
     def parse_info(computo: dict, REG: dict) -> list:
-        header = [item for i in REG.values() for item in
-                  i.values()]  # making a flat list (1D) from the list of lists (2D)
-        resumen = [header + list(i.values()) for i in computo['resumen']]
+        header = [f'{i}_{v}' for i in REG for v in REG[i]] + list(computo['title'].values())
+        leftdata = [item for i in REG.values() for item in
+                    i.values()]  # making a flat list (1D) from the list of lists (2D)
+        resumen = [leftdata + list(i.values()) for i in computo['resumen']]
         # data = [header + [partido['a']] + list(candidato.values()) for partido in computo['data'] for candidato in partido['sd']]
-        data = [header + list(partido.values()) for partido in computo['data']]
-        return data + resumen
+        data = [leftdata + list(partido.values()) for partido in computo['data']]
+        return header, data + resumen  # armar directamente pd.DataFrame podría ser más lento, pero más cómodo
 
     @staticmethod
     def extract_json(driver: webdriver, url: str):
@@ -132,7 +137,9 @@ class ServelScraper:
 
     def export_unfold(self, **kwargs):
         temp_ = self.unfold(**kwargs)
-        ans = pd.DataFrame(temp_)
+        body = [k for i in temp_ for k in i[1:]]
+        header = list(set(tuple(v[0]) for v in temp_))[0]
+        ans = pd.DataFrame(body, columns=header)
         sl = kwargs['REG']
         # out_name = f'{sl.cod_com}-{sl.com}-{sl.cod_circ}-{sl.cod_circ}.csv'
         OUT_NAME = '{0}-{1}-{2}-{3}-{4}-{5}.csv'
@@ -140,9 +147,9 @@ class ServelScraper:
         out_name = OUT_NAME.format(sl["regiones"]["c"], sl["regiones"]["d"],
                                    sl["comunas"]["c"], sl["comunas"]["d"],
                                    sl["circ_electoral"]["c"], sl["circ_electoral"]["d"])
-
-        ans.columns = self.levels_columns + ['cod_local', 'local', 'cod_mesa', 'mesas_fusionadas', 'n1',
-                                             'n2'] + self.columns # + ['n3']
+        #
+        # ans.columns = self.levels_columns + ['cod_local', 'local', 'cod_mesa', 'mesas_fusionadas', 'n1',
+        #                                      'n2'] + self.columns # + ['n3']
 
         ans.to_csv(self.outputFolder / out_name, index=False, encoding='UTF-8')
 
@@ -152,7 +159,8 @@ class ServelScraper:
                start: str = 'regiones',
                val: str = None,
                REG: dict = {},
-               stop_on: str = None,
+               stop_on: str = None,  # stop before, but without processing
+               stop_proc: str = None,  # stop before and proceess like mesas
                data_list: list = None):
 
         global DATA
@@ -163,7 +171,7 @@ class ServelScraper:
 
         for e in jsn:
             REG[start] = e
-            if start != 'mesas':
+            if start not in ('mesas', stop_proc):
                 clevel = DIV_FILTERS[start]['level']  # nivel actual número
                 nlevel = LEVELS[clevel + 1]  # nivel siguiente palabras
                 if stop_on is not None:
@@ -173,18 +181,19 @@ class ServelScraper:
                         # logging.info(', '.join(val_))
                         continue
                 if data_list is None:
-                    data_list = self.unfold(nlevel, e['c'], REG, stop_on)
+                    data_list = self.unfold(nlevel, e['c'], REG, stop_on, stop_proc)
                 else:
-                    data_list = self.unfold(nlevel, e['c'], REG, stop_on, data_list)
+                    data_list = self.unfold(nlevel, e['c'], REG, stop_on, stop_proc, data_list)
             else:
+            # if start == 'mesas' or start == stop_proc:
                 # print([item for i in REG.values() for item in i.values()])
                 data_url = self.assembler_url(start, election=self.election, type='computo', value=e['c'])
                 data = self.extract_json(self.driver, data_url)
-                votos_mesa = self.parse_info(data, REG)
+                header, body = self.parse_info(data, REG)
                 if data_list is None:
-                    data_list = votos_mesa
+                    data_list = [[header] + body]
                 else:
-                    data_list += votos_mesa
+                    data_list += [[header] + body]
 
         if stop_on is None:
             return data_list

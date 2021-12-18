@@ -3,15 +3,16 @@ import os
 import glob
 from time import time
 from selenium import webdriver
-from serlvelscraper import ServelScraper
+from servelscraper.servelscraper import ServelScraper
+from servelscraper.auxiliary import selector
 from concurrent.futures import ThreadPoolExecutor, wait
+from pathlib import Path
+# from servelscraper.config import COL_DICT
 
 # from selenium.webdriver.common.by import By
 # from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 # from selenium.webdriver.support.ui import Select, WebDriverWait
 # from selenium.webdriver.support import expected_conditions as EC
-
-DATA = []
 
 
 def list_elections(webdriver_path: str,
@@ -29,7 +30,19 @@ def meta_scraper(webdriver_path: 'str',
                  max_workers: int = 20,
                  headless: bool = True,
                  overwrite_temp: bool = False,
+                 to_disk: bool = False,
                  **kwargs):
+    """
+
+    @param webdriver_path: Path a webdriver, por el momento chromedriver
+    @param driver_options: opciones del driver
+    @param max_workers: número máximo de workers para el scrap concurrente
+    @param headless: headless scraper?
+    @param overwrite_temp: sobreescribir base de datos ya escrapeada (actualizar); caso contrario descarga lo que no esté y lee lo que está sin actualizar.
+    @param to_disk: guardar un archivo final en disco?
+    @param kwargs: Argumentos pasados a create_scraper_unit
+    @return:
+    """
     if headless:
         driver_options.add_argument("--headless")
         print("Running in headless mode")
@@ -70,14 +83,21 @@ def meta_scraper(webdriver_path: 'str',
                 )
 
     wait(futures)
-    end_time = time()
-    elapsed_time = end_time - start_time
-    print(f"Elapsed run time: {elapsed_time} seconds")
+    end_time_1 = time()
+    elapsed_time_1 = end_time_1 - start_time
+    print(f"Elapsed run time: {elapsed_time_1} seconds | {elapsed_time_1 / 60} minutes")
 
     print('Starting parsing')
     all_files = glob.glob(os.path.join(temp_dir, "*.csv"))
     all_data = pd.concat((pd.read_csv(f) for f in all_files))
-    result = parse_scraped(all_data, os.path.join(out_dir, 'resultados.xlsx'))
+    out_ = ''
+    if to_disk:
+        out_ = os.path.join(out_dir, f'{kwargs["name"]}.xlsx')
+    result = parse_scraped(all_data, out_, kwargs['election'])
+    print('Process ended')
+    end_time_2 = time()
+    elapsed_time_2 = end_time_2 - start_time
+    print(f'Total elapsed run time: {elapsed_time_2} seconds | {elapsed_time_2 / 60} minutes')
 
     return True, result
 
@@ -93,6 +113,7 @@ def create_scraper_unit(level,
 
     driver.implicitly_wait(3)
     scrap = ServelScraper(driver, **kwargs)
+    stop_proc = kwargs.get('stop_proc', None)
     # scrap.set_driver(driver)
 
     reg_dict = {'regiones': {'c': level.cod_reg, 'd': level.reg},
@@ -105,6 +126,7 @@ def create_scraper_unit(level,
                               val=level.cod_circ,
                               REG=reg_dict,
                               stop_on=None,
+                              stop_proc=stop_proc,
                               data_list=[])
 
     driver.close()
@@ -112,21 +134,24 @@ def create_scraper_unit(level,
     return True, ans
 
 
-def parse_scraped(df: pd.DataFrame, outfile: str):
-    ans = df.drop(columns=['sd', 'votos_per', 'es_electo', 'n1', 'n2'])
+def parse_scraped(df: pd.DataFrame, outfile: str, election: str):
+    ans = selector(election)(df).copy()
+    # ans = df.drop(columns=['sd', 'votos_per', 'es_electo', 'n1', 'n2'])
+    # ans['Mesa'] = ans['mesas_fusionadas'].str.split('-').str[0]
+    ans.loc[:, 'reg_cod'] = ans['regiones_c'] % 100
+    # ans = ans.loc[~ans.opcion.isin(['Válidamente Emitidos', 'Total Votación'])]
+    # ans.rename(columns=col_dict, inplace=True)
 
-    ans['Mesa'] = ans['mesas_fusionadas'].str.split('-').str[0]
-    ans['Tipo mesa'] = ans['Mesa'].str.extract(r'(V|M)$').fillna('')
+    # --- Clean
+    #
+    # - Removing unnamed
+    ans = ans.loc[:, ans.columns[~ans.columns.str.startswith('Unnamed')]]
 
-    col_dict = {'cod_reg': 'Nro.Región', 'reg': 'Región', 'mesas_fusionadas': 'Mesas Fusionadas',
-                'com': 'Comuna', 'votos_n': 'Votos TRICEL', 'local': 'Local',
-                'circ': 'Circ.Electoral'}
+    if outfile != '':
+        ans.to_excel(outfile, index=False)
+        # ans.to_csv(outfile, encoding='UTF-8', index=False)
 
-    ans['cod_reg'] = ans['cod_reg'] % 100
-    ans = ans.loc[~ans.opcion.isin(['Válidamente Emitidos', 'Total Votación'])]
-    ans.rename(columns=col_dict, inplace=True)
-    # ans.to_csv(outfile, encoding='UTF-8', index=False)
-    ans.to_excel(outfile, index=False)
+    return ans
 
-    return True
+
 

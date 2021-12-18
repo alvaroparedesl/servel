@@ -1,7 +1,6 @@
-from functions import DATA, servelScraper
+from votaciones.servelscraper.functions import servelScraper
 from selenium import webdriver
 from pathlib import Path
-import pandas as pd
 
 # from django.template.defaultfilters import slugify
 # https://oficial.servel.cl/resultados-definitivos-elecciones-presidencial-parlamentaria-cores-2017/

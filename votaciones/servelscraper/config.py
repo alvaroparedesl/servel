@@ -11,7 +11,23 @@ LEVELS = {DIV_FILTERS[k]['level']: k for k in DIV_FILTERS}
 
 URLS = {}
 
+# COL_DICT = {
+#     'rename': {
+#         'Nombre de los Candidatos': 'opcion',
+#         'mesas_d': 'mesas_fusionadas'
+#     },
+#     'drop': {
+#
+#     },
+#     ''
+#
+# }
+
 '''
+    # col_dict = {'cod_reg': 'Nro.Región', 'reg': 'Región', 'mesas_fusionadas': 'Mesas Fusionadas',
+    #             'com': 'Comuna', 'votos_n': 'Votos TRICEL', 'local': 'Local',
+    #             'circ': 'Circ.Electoral'}
+
 $rootScope = angular.element(document).scope()
 
 IGNORAR
