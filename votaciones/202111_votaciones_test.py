@@ -49,18 +49,6 @@ scrap.get_levels('circ_electoral', overwrite=False)
 
 sl = scrap.levels.iloc[0]
 
-# ans = scrap.unfold(start='locales',
-#                    val=sl.cod_circ,
-#                    REG={'regiones': {'c': sl.cod_reg, 'd': sl.reg},
-#                         'circ_senatorial': {'c': sl.cod_cs, 'd': sl.cs},
-#                         'distritos': {'c': sl.cod_dis, 'd': sl.dis},
-#                         'comunas': {'c': sl.cod_com, 'd': sl.com},
-#                         'circ_electoral': {'c': sl.cod_circ, 'd': sl.circ}
-#                         },
-#                    stop_on=None,
-#                    data_list=[])
-
-
 ans = scrap.export_unfold(start='locales',
                    val=sl.cod_circ,
                    REG={'regiones': {'c': sl.cod_reg, 'd': sl.reg},
@@ -70,6 +58,5 @@ ans = scrap.export_unfold(start='locales',
                         'circ_electoral': {'c': sl.cod_circ, 'd': sl['circ']}
                         },
                    stop_on=None,
+                   stop_proc='locales',
                    data_list=[])
-
-kk
