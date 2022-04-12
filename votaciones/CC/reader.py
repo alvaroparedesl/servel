@@ -11,19 +11,24 @@ urlAsistenciaComisiones = 'https://www.cconstituyente.cl/WSConvencionConstitucio
 
 comisiones = pd.read_xml(request.urlopen(listaComisiones))
 convencionales = pd.read_xml(request.urlopen(listaConvencionales))
-convencionales = pd.read_xml(request.urlopen(listaSesionesPleno))
+sesiones = pd.read_xml(request.urlopen(listaSesionesPleno))
 
-comisionesVot = [];
-comisionesAsis = [];
-
+comisionesVot = []
 for i, v in comisiones.iterrows():
     id = v.ComisionID
     print(f'Comision {id}: {v.Nombre}')
-    comisionesVot.append(read_parse(urlVotacionComisiones.format(id)))
-    comisionesAsis.append(read_parse(urlAsistenciaComisiones.format(id)))
-
+    comisionesVot.append(read_parse(urlVotacionComisiones.format(id), id))
 votacionsComision = pd.concat(comisionesVot)
+
+comisionesAsis = []
+for i, v in comisiones.iterrows():
+    id = v.ComisionID
+    print(f'Comision {id}: {v.Nombre}')
+    temp = read_parse(urlAsistenciaComisiones.format(id), id)
+    comisionesAsis.append(temp)
 asistenciaComision = pd.concat(comisionesAsis)
+
+# Split step ??
 
 
 ## Export

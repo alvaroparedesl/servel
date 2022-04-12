@@ -4,7 +4,7 @@ from urllib import request
 from lxml import objectify
 
 
-def flatten_dict(obj: lxml.objectify, keys: dict = {}, items: list = []):
+def flatten_dict(obj: lxml.objectify, keys: dict = {}):  #, items: list = []):
     """
     Make a nested xml object into a flat list of dicts
 
@@ -19,11 +19,17 @@ def flatten_dict(obj: lxml.objectify, keys: dict = {}, items: list = []):
 
     children = [v for v in obj.getchildren() if not hasattr(v, 'pyval')]
 
+    items = []
     if children:
         for c in children:
-            y = flatten_dict(c,
-                             keys)  # TODO: revisar, por recursividad entrega una lista a veces [ni idea como arreglarlo]
-            if isinstance(y, dict):  # este if es la solución al problema anterior
+            # # TODO: revisar, por recursividad entrega una lista a veces [ni idea como arreglarlo]
+            # y = flatten_dict(c, keys)
+            # if isinstance(y, dict):  # este if es la solución al problema anterior
+            #     items.append(y)
+            y = flatten_dict(c, keys)
+            if isinstance(y, list):
+                items.extend(y)
+            else:
                 items.append(y)
     else:
         return keys
@@ -31,11 +37,17 @@ def flatten_dict(obj: lxml.objectify, keys: dict = {}, items: list = []):
     return items
 
 
-def read_parse(url: str, to_pandas: bool = True):
+def read_parse(url: str, id: str, to_pandas: bool = True):
     content = request.urlopen(url)
     sc = content.read()
     pp = objectify.fromstring(sc)
     if to_pandas:
-        return pd.DataFrame(flatten_dict(pp))
+        temp = flatten_dict(pp)
+        if len(temp) > 0:
+            df = pd.DataFrame(temp)
+            df['id'] = id
+            return df
+        else:
+            return None
     else:
         return flatten_dict(pp)
