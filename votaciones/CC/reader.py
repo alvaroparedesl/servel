@@ -11,6 +11,8 @@ urlAsistenciaComisiones = 'https://www.cconstituyente.cl/WSConvencionConstitucio
 
 comisiones = pd.read_xml(request.urlopen(listaComisiones))
 convencionales = pd.read_xml(request.urlopen(listaConvencionales))
+convencionales['Nombre'] = convencionales.ApellidoPaterno + ' ' + convencionales.ApellidoMaterno + ', ' +\
+                           convencionales.Nombres  # ID para las votaciones
 sesiones = pd.read_xml(request.urlopen(listaSesionesPleno))
 
 comisionesVot = []
@@ -33,5 +35,6 @@ asistenciaComision = pd.concat(comisionesAsis)
 
 ## Export
 comisiones.to_csv('data/comisiones.csv', index=False)
+convencionales.to_csv('data/convencionales.csv', index=False)
 votacionsComision.to_csv('data/votacionComisiones.csv', index=False)
 asistenciaComision.to_csv('data/asistenciaComisiones.csv', index=False)
